@@ -13,6 +13,7 @@ mod profile;
 mod sweep;
 
 use glam::Vec2;
+use serde::{Deserialize, Serialize};
 
 use crate::{Mesh, Solid};
 
@@ -20,7 +21,7 @@ use crate::{Mesh, Solid};
 const CREASE_DEGREES: f32 = 40.0;
 
 /// The seven SL building block types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PrimKind {
     Box,
     Cylinder,
@@ -75,7 +76,7 @@ impl PrimKind {
 }
 
 /// The shape of the hole left by a non-zero hollow.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum HollowShape {
     /// The same shape as the prim's own profile.
     #[default]
@@ -109,7 +110,7 @@ pub const MIN_CUT_SPAN: f32 = 0.02;
 pub const MAX_HOLLOW: f32 = 0.95;
 
 /// All shape parameters of a prim. Which ones apply depends on [`PrimKind`]; the rest are ignored.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrimShape {
     pub kind: PrimKind,
     /// Begin and end of the path cut, 0..1. On box, cylinder and prism this cuts the profile like a

@@ -1,6 +1,7 @@
 //! The objects being built and their placement in the world.
 
 use glam::{EulerRot, Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::prim::{PrimKind, PrimShape};
 
@@ -8,7 +9,7 @@ use crate::prim::{PrimKind, PrimShape};
 pub const DEFAULT_SIZE: f32 = 50.0;
 
 /// A single prim placed in the world.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Object {
     /// Stable identifier, unique within a scene.
     pub id: u64,
@@ -55,13 +56,30 @@ pub fn default_size(kind: PrimKind) -> Vec3 {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
     pub objects: Vec<Object>,
     next_id: u64,
 }
 
 impl Scene {
+    /// A scene holding `objects`. New objects get ids above the highest one already used.
+    pub fn from_objects(objects: Vec<Object>) -> Self {
+        let next_id = objects.iter().map(|o| o.id).max().unwrap_or(0);
+        Self { objects, next_id }
+    }
+
+    /// Copies an object, moves the copy by `offset` and returns the copy's id.
+    pub fn duplicate(&mut self, id: u64, offset: Vec3) -> Option<u64> {
+        let mut copy = self.get(id)?.clone();
+        self.next_id += 1;
+        copy.id = self.next_id;
+        copy.position += offset;
+        let new_id = copy.id;
+        self.objects.push(copy);
+        Some(new_id)
+    }
+
     /// Adds a default prim of `kind` resting on the ground at `at` (Z is ignored) and returns its
     /// id.
     pub fn add_prim(&mut self, kind: PrimKind, at: Vec3) -> u64 {
@@ -109,6 +127,19 @@ mod tests {
         // The bottom of the transformed unit box sits at Z = 0.
         let bottom = box_.transform().transform_point3(Vec3::new(0.0, 0.0, -0.5));
         assert!(bottom.z.abs() < 1e-4);
+    }
+
+    #[test]
+    fn duplicates_get_fresh_ids_after_loading() {
+        // A loaded scene must not hand out an id that is already taken.
+        let mut scene = Scene::default();
+        let a = scene.add_prim(PrimKind::Box, Vec3::ZERO);
+        let b = scene.add_prim(PrimKind::Box, Vec3::ZERO);
+        let mut loaded = Scene::from_objects(scene.objects.clone());
+        let c = loaded.duplicate(a, Vec3::X).unwrap();
+        assert!(c != a && c != b);
+        let original = loaded.get(a).unwrap().position;
+        assert_eq!(loaded.get(c).unwrap().position, original + Vec3::X);
     }
 
     #[test]

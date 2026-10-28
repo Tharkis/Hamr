@@ -16,8 +16,12 @@ makes them wrong.
 | `crates/hamr-core/src/solid.rs` | `Solid`: indexed closed surface, `check_closed`, `to_mesh` for shading |
 | `crates/hamr-core/src/prim/` | `PrimShape` (SL Object-tab parameters), `profile.rs` cross-sections, `sweep.rs` path sweep and caps, `tests.rs` watertightness grid |
 | `crates/hamr-core/src/scene.rs` | `Scene` and `Object` (prim + position, rotation, size in mm, colour, negative flag) |
+| `crates/hamr-core/src/history.rs` | `History`: snapshot undo/redo; `commit` turns changes since the last commit into one step |
+| `crates/hamr-core/src/project.rs` | `.hamr` project files: versioned JSON of the scene, `to_json` / `from_json` |
+| `crates/hamr-core/src/gizmo.rs` | Move/rotate/stretch handles: their lines, screen-space hit test, and `Drag` maths with snapping |
 | `crates/hamr-app` | The `hamr` binary: eframe/egui UI and wgpu viewport |
-| `crates/hamr-app/src/app.rs` | Window layout, Build panel, viewport input, picking, selection |
+| `crates/hamr-app/src/app.rs` | Window layout, menus, shortcuts, Build panel, viewport input, handles, picking, undo commits |
+| `crates/hamr-app/src/files.rs` | Open/save dialogs (rfd) and atomic project file writes |
 | `crates/hamr-app/src/object_panel.rs` | Object panel: placement and shape parameters of the selected prim |
 | `crates/hamr-app/src/renderer.rs`, `*.wgsl` | Viewport rendering (opaque, translucent negative prims, grid, overlay) and shaders |
 | `.github/workflows/ci.yml` | fmt + clippy, then test and release build on Ubuntu and Windows |
@@ -63,6 +67,16 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
   (`MAX_TWISTED_EDGE`), and caps fan from a centre point to include them.
 - Negative prims only carry a flag for now; the subtraction happens at export (step 4).
 
+## Editing and undo
+
+- Edits change `Scene` directly. `app.rs` calls `History::commit` once nothing is held: no handle
+  drag, no mouse button down and no focused widget. A whole drag or a typed value becomes one undo
+  step, so don't commit from inside individual edits.
+- Move and rotate handles use world axes, stretch handles the prim's own axes. Handle maths lives in
+  `gizmo.rs` so it is tested without a window; the app only hit-tests and feeds it rays.
+- Unsaved changes are `scene != saved`, so undoing back to the saved state clears the `*` in the
+  title.
+
 ## Known traps
 
 - Run `xdotool windowfocus <id>` before `xdotool key ...`, or the keys go nowhere.
@@ -71,5 +85,7 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
 - Windows is a supported target: avoid Unix-only paths, shell calls and APIs in app code.
 - `hamr-core` is built with `opt-level = 2` in dev (root `Cargo.toml`); without it the prim test
   grid takes about 30 s instead of 2 s.
+- `xdotool windowclose` destroys the window instead of asking it to close, so it skips the
+  unsaved-changes prompt; test that through File > Quit.
 - egui `DragValue`s can be set from xdotool by clicking one, then `ctrl+a`, then
   `type -- "<value>"` and `Return`. The `--` matters for negative numbers.
