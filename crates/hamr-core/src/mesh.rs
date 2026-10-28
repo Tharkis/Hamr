@@ -27,9 +27,26 @@ pub enum WatertightError {
     OpenEdge,
     /// An edge belongs to more than two triangles, or two neighbours wind the same way.
     NonManifoldEdge,
+    /// A triangle has two corners at the same position, so it has no area.
+    Degenerate,
+}
+
+/// Exact bit pattern of a position, with −0.0 folded into 0.0.
+pub(crate) fn position_key(p: Vec3) -> [u32; 3] {
+    (p + Vec3::ZERO).to_array().map(f32::to_bits)
 }
 
 impl Mesh {
+    /// Enclosed volume; positive when the triangles face outwards.
+    pub fn signed_volume(&self) -> f32 {
+        let pos = |i: u32| Vec3::from(self.vertices[i as usize].position);
+        self.indices
+            .chunks_exact(3)
+            .map(|t| pos(t[0]).dot(pos(t[1]).cross(pos(t[2]))))
+            .sum::<f32>()
+            / 6.0
+    }
+
     /// An axis-aligned box centred on the origin with flat-shaded faces.
     pub fn cuboid(size: Vec3) -> Self {
         let h = size * 0.5;
@@ -74,7 +91,8 @@ impl Mesh {
             .min_by(f32::total_cmp)
     }
 
-    /// Checks that the surface is closed and consistently oriented, which is what slicers need.
+    /// Checks that the surface is closed, has no collapsed triangles and is consistently oriented,
+    /// which is what slicers need.
     ///
     /// Vertices at the same position count as one, so flat-shaded meshes with split normals pass.
     pub fn check_watertight(&self) -> Result<(), WatertightError> {
@@ -82,7 +100,7 @@ impl Mesh {
         let mut ids: HashMap<[u32; 3], u32> = HashMap::new();
         let mut welded = Vec::with_capacity(self.vertices.len());
         for v in &self.vertices {
-            let key = v.position.map(|c| (c + 0.0).to_bits());
+            let key = position_key(v.position.into());
             let next = ids.len() as u32;
             welded.push(*ids.entry(key).or_insert(next));
         }
@@ -97,7 +115,7 @@ impl Mesh {
                     .ok_or(WatertightError::IndexOutOfRange)?;
             }
             if w[0] == w[1] || w[1] == w[2] || w[0] == w[2] {
-                continue; // Degenerate triangles add no area and no edges.
+                return Err(WatertightError::Degenerate);
             }
             for k in 0..3 {
                 *edges.entry((w[k], w[(k + 1) % 3])).or_default() += 1;

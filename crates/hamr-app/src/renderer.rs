@@ -34,9 +34,14 @@ pub struct MeshVertex {
 #[derive(Default)]
 pub struct SceneGeometry {
     pub revision: u64,
+    /// Depth-tested lines, such as the grid.
     pub lines: Vec<LineVertex>,
+    /// Lines drawn on top of everything, such as the selection outline.
+    pub overlay_lines: Vec<LineVertex>,
     pub mesh_vertices: Vec<MeshVertex>,
+    /// Opaque triangles first, then translucent ones.
     pub mesh_indices: Vec<u32>,
+    pub opaque_index_count: u32,
 }
 
 #[repr(C)]
@@ -62,7 +67,9 @@ pub struct ViewportRenderer {
     globals: wgpu::Buffer,
     globals_bind: wgpu::BindGroup,
     line_pipeline: wgpu::RenderPipeline,
+    overlay_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
+    translucent_pipeline: wgpu::RenderPipeline,
     blit_pipeline: wgpu::RenderPipeline,
     blit_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -81,7 +88,9 @@ struct Targets {
 struct Buffers {
     revision: u64,
     lines: Option<(wgpu::Buffer, u32)>,
-    mesh: Option<(wgpu::Buffer, wgpu::Buffer, u32)>,
+    overlay: Option<(wgpu::Buffer, u32)>,
+    /// Vertices, indices, opaque index count and total index count.
+    mesh: Option<(wgpu::Buffer, wgpu::Buffer, u32, u32)>,
 }
 
 impl ViewportRenderer {
@@ -132,10 +141,10 @@ impl ViewportRenderer {
             ..Default::default()
         });
 
-        let depth = |write: bool| wgpu::DepthStencilState {
+        let depth = |write: bool, compare: wgpu::CompareFunction| wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(write),
-            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            depth_compare: Some(compare),
             stencil: Default::default(),
             bias: Default::default(),
         };
@@ -150,64 +159,79 @@ impl ViewportRenderer {
         };
 
         let line_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4];
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("hamr lines"),
-            layout: Some(&scene_layout),
-            vertex: wgpu::VertexState {
-                module: &scene_shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<LineVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &line_attrs,
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &scene_shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &scene_target,
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(depth(false)),
-            multisample: msaa,
-            multiview_mask: None,
-            cache: None,
-        });
+        let line_pipeline_with = |label, depth_stencil| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&scene_layout),
+                vertex: wgpu::VertexState {
+                    module: &scene_shader,
+                    entry_point: Some("vs_line"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<LineVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &line_attrs,
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &scene_shader,
+                    entry_point: Some("fs_line"),
+                    compilation_options: Default::default(),
+                    targets: &scene_target,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_stencil),
+                multisample: msaa,
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let line_pipeline =
+            line_pipeline_with("hamr lines", depth(false, wgpu::CompareFunction::LessEqual));
+        let overlay_pipeline =
+            line_pipeline_with("hamr overlay", depth(false, wgpu::CompareFunction::Always));
 
         let mesh_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
-        let mesh_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("hamr meshes"),
-            layout: Some(&scene_layout),
-            vertex: wgpu::VertexState {
-                module: &scene_shader,
-                entry_point: Some("vs_mesh"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<MeshVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &mesh_attrs,
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &scene_shader,
-                entry_point: Some("fs_mesh"),
-                compilation_options: Default::default(),
-                targets: &scene_target,
-            }),
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(depth(true)),
-            multisample: msaa,
-            multiview_mask: None,
-            cache: None,
-        });
+        let mesh_pipeline_with = |label, depth_stencil| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&scene_layout),
+                vertex: wgpu::VertexState {
+                    module: &scene_shader,
+                    entry_point: Some("vs_mesh"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<MeshVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &mesh_attrs,
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &scene_shader,
+                    entry_point: Some("fs_mesh"),
+                    compilation_options: Default::default(),
+                    targets: &scene_target,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(depth_stencil),
+                multisample: msaa,
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let mesh_pipeline =
+            mesh_pipeline_with("hamr meshes", depth(true, wgpu::CompareFunction::LessEqual));
+        // Translucent (negative) prims are depth tested but don't hide what is behind them.
+        let translucent_pipeline = mesh_pipeline_with(
+            "hamr translucent",
+            depth(false, wgpu::CompareFunction::LessEqual),
+        );
 
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hamr blit"),
@@ -270,7 +294,9 @@ impl ViewportRenderer {
             globals,
             globals_bind,
             line_pipeline,
+            overlay_pipeline,
             mesh_pipeline,
+            translucent_pipeline,
             blit_pipeline,
             blit_layout,
             sampler,
@@ -349,14 +375,18 @@ impl ViewportRenderer {
                 usage,
             })
         };
-        let lines = (!geometry.lines.is_empty()).then(|| {
-            let buf = vertex_buffer(
-                "hamr lines",
-                bytemuck::cast_slice(&geometry.lines),
-                wgpu::BufferUsages::VERTEX,
-            );
-            (buf, geometry.lines.len() as u32)
-        });
+        let line_buffer = |label, lines: &[LineVertex]| {
+            (!lines.is_empty()).then(|| {
+                let buf = vertex_buffer(
+                    label,
+                    bytemuck::cast_slice(lines),
+                    wgpu::BufferUsages::VERTEX,
+                );
+                (buf, lines.len() as u32)
+            })
+        };
+        let lines = line_buffer("hamr lines", &geometry.lines);
+        let overlay = line_buffer("hamr overlay", &geometry.overlay_lines);
         let mesh = (!geometry.mesh_indices.is_empty()).then(|| {
             let vertices = vertex_buffer(
                 "hamr mesh vertices",
@@ -368,11 +398,18 @@ impl ViewportRenderer {
                 bytemuck::cast_slice(&geometry.mesh_indices),
                 wgpu::BufferUsages::INDEX,
             );
-            (vertices, indices, geometry.mesh_indices.len() as u32)
+            let total = geometry.mesh_indices.len() as u32;
+            (
+                vertices,
+                indices,
+                geometry.opaque_index_count.min(total),
+                total,
+            )
         });
         self.buffers = Some(Buffers {
             revision: geometry.revision,
             lines,
+            overlay,
             mesh,
         });
     }
@@ -429,15 +466,29 @@ impl CallbackTrait for ViewportCallback {
             ..Default::default()
         });
         pass.set_bind_group(0, &renderer.globals_bind, &[]);
-        // Solids first so they write depth, then lines test against it.
-        if let Some((vertices, indices, count)) = &buffers.mesh {
+        // Opaque solids first so they write depth, then lines and translucent solids test against
+        // it, and the overlay goes on top of everything.
+        if let Some((vertices, indices, opaque, _)) = &buffers.mesh {
             pass.set_pipeline(&renderer.mesh_pipeline);
             pass.set_vertex_buffer(0, vertices.slice(..));
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..*count, 0, 0..1);
+            pass.draw_indexed(0..*opaque, 0, 0..1);
         }
         if let Some((vertices, count)) = &buffers.lines {
             pass.set_pipeline(&renderer.line_pipeline);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            pass.draw(0..*count, 0..1);
+        }
+        if let Some((vertices, indices, opaque, total)) = &buffers.mesh {
+            if opaque < total {
+                pass.set_pipeline(&renderer.translucent_pipeline);
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(*opaque..*total, 0, 0..1);
+            }
+        }
+        if let Some((vertices, count)) = &buffers.overlay {
+            pass.set_pipeline(&renderer.overlay_pipeline);
             pass.set_vertex_buffer(0, vertices.slice(..));
             pass.draw(0..*count, 0..1);
         }
