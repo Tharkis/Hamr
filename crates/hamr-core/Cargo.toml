@@ -1,0 +1,12 @@
+[package]
+name = "hamr-core"
+description = "Scene, geometry and camera logic for Hamr, independent of any UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+glam.workspace = true
+bytemuck.workspace = true

@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/hamr-core", "crates/hamr-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Tharkis/Hamr"
+rust-version = "1.85"
+
+[workspace.dependencies]
+glam = { version = "0.34", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
