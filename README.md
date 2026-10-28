@@ -9,13 +9,15 @@ no code from the Second Life viewer.
 
 ## Status
 
-Early development. The current build opens a window with a 3D viewport, a ground grid and camera
-controls. Prims, editing tools and export are next.
+Early development. You can create all seven Second Life prim types, select them, and edit their
+position, size, rotation, colour and every SL shape parameter. Prims can be marked negative to cut
+holes; the cut is applied when exporting, which comes in step 4. Move/rotate/stretch handles and the
+other build tools come next.
 
 | Milestone | Contents | State |
 | --- | --- | --- |
-| 1. Foundation | Window, viewport, camera, grid, units, CI | In progress |
-| 2. Prim engine | Every SL prim type and parameter, hole-cutting prims, watertight tests | Planned |
+| 1. Foundation | Window, viewport, camera, grid, units, CI | Done |
+| 2. Prim engine | Every SL prim type and parameter, hole-cutting prims, watertight tests | Done |
 | 3. Build tools | Move/rotate/stretch, snapping, linking, mirror and array, undo, saving, custom prim library | Planned |
 | 4. Export | STL, OBJ, glTF, merge into one solid, printability check | Planned |
 
@@ -40,11 +42,13 @@ Run the tests with `cargo test`.
 | Focus on a point | | Alt+click |
 | Frame everything | F | |
 | Reset camera | Home | |
+| Select a prim | Click | |
+| Delete the selected prim | Delete | |
 
 ## Layout
 
-- `crates/hamr-core`: geometry, camera and units, with no UI or GPU code, so it can be tested on its
-  own.
+- `crates/hamr-core`: prims, geometry, scene, camera and units, with no UI or GPU code, so it can be
+  tested on its own.
 - `crates/hamr-app`: the desktop application (egui for the interface, wgpu for 3D rendering).
 
 All lengths are stored in millimetres. The world is right-handed with Z pointing up.

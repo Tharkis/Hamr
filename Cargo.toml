@@ -12,3 +12,8 @@ rust-version = "1.85"
 [workspace.dependencies]
 glam = { version = "0.34", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
+earcut = "0.4"
+
+# Prim generation is heavy enough that unoptimised debug builds make the tests and the app slow.
+[profile.dev.package.hamr-core]
+opt-level = 2

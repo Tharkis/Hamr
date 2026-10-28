@@ -10,3 +10,4 @@ rust-version.workspace = true
 [dependencies]
 glam.workspace = true
 bytemuck.workspace = true
+earcut.workspace = true
