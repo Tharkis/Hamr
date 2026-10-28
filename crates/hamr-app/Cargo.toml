@@ -1,0 +1,20 @@
+[package]
+name = "hamr"
+description = "Hamr: build 3D models from primitives."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "hamr"
+path = "src/main.rs"
+
+[dependencies]
+hamr-core = { path = "../hamr-core" }
+glam.workspace = true
+bytemuck.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11", "accesskit", "clipboard"] }
+log = "0.4"
+env_logger = "0.11"
