@@ -1,3 +1,12 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/hamr-logo-dark.svg">
+    <img alt="Hamr" src="assets/logo/hamr-logo-light.svg" width="372">
+  </picture>
+</p>
+
+<p align="center"><i>Shape anything from primitives.</i></p>
+
 # Hamr
 
 Hamr is a desktop 3D modeling tool for building models out of primitives, in the spirit of the
@@ -7,9 +16,34 @@ OBJ and glTF. It runs natively on Windows and Linux.
 Hamr is an independent project. It reproduces how the Second Life build tools behave but contains
 no code from the Second Life viewer.
 
+## The name
+
+In Old Norse, *hamr* is a shape, a skin, the outward form a thing takes. Shapeshifters changed
+their hamr, and Freyja lent out her *valshamr*, a falcon-shape cloak, to anyone who needed wings.
+Its close cousin *hamarr* is a hammer, which is why the icon is Thor's hammer Mjǫllnir, built the
+way Hamr builds things: a box for the head, a cylinder for the handle and a sphere for the pommel.
+The handle is short on purpose. In the Prose Edda, Loki, as a fly, bit the smith at the bellows,
+and the handle came out too short.
+
+## Install
+
+Download the latest release from the
+[releases page](https://github.com/Tharkis/Hamr/releases/latest):
+
+| System | File |
+| --- | --- |
+| Windows 10 and 11 | `Hamr-<version>-windows-x64-setup.exe`, or the portable `.zip` |
+| Arch Linux, CachyOS | `hamr-<version>-1-x86_64.pkg.tar.zst`: `sudo pacman -U <file>` |
+| Debian, Ubuntu, Mint | `hamr_<version>-1_amd64.deb`: `sudo apt install ./<file>` |
+| Fedora, openSUSE | `hamr-<version>-1.x86_64.rpm`: `sudo dnf install ./<file>` |
+| Any Linux, sandboxed | `Hamr-<version>-x86_64.flatpak`: `flatpak install --user <file>` |
+| Any Linux, no install | `Hamr-<version>-x86_64.AppImage`: make it executable and run it |
+
+Hamr needs a graphics driver with Vulkan support (Mesa on Linux).
+
 ## Status
 
-Early development, but the whole planned feature set works. You can create all seven Second Life
+Version 1.0: the whole planned feature set works. You can create all seven Second Life
 prim types and edit their position, size, rotation, colour and every SL shape parameter. Move,
 rotate and stretch handles snap to the grid, every edit can be undone, and projects save to `.hamr`
 files. Prims can be linked, mirrored and repeated in arrays, and any selection can be saved as a
@@ -34,7 +68,8 @@ Build Tools on Windows, `g++` or `clang` on Linux). The first build downloads an
 cargo run --release
 ```
 
-Run the tests with `cargo test`.
+Run the tests with `cargo test`. The installers and Linux packages are built by the Release
+workflow (`.github/workflows/release.yml`) from the files in `packaging/`.
 
 ## Camera controls
 
@@ -96,6 +131,7 @@ to print and models larger than the build volume.
 - `crates/hamr-core`: prims, geometry, scene, camera and units, with no UI or GPU code, so it can be
   tested on its own.
 - `crates/hamr-app`: the desktop application (egui for the interface, wgpu for 3D rendering).
+- `assets/`: the icon and logo. `packaging/`: installer and package definitions.
 
 All lengths are stored in millimetres. The world is right-handed with Z pointing up.
 

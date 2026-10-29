@@ -1,0 +1,21 @@
+# Arch Linux and CachyOS package, repackaging the release build of Hamr.
+# The release workflow sets pkgver from Cargo.toml and puts the tarball next to this file.
+pkgname=hamr
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Build 3D models from primitives and export watertight STL, OBJ and glTF"
+arch=('x86_64')
+url="https://github.com/Tharkis/Hamr"
+license=('MIT OR Apache-2.0')
+depends=('gcc-libs' 'glibc' 'hicolor-icon-theme' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader')
+options=('!strip' '!debug')
+source=("hamr-$pkgver-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    cd "hamr-$pkgver-linux-x86_64"
+    install -Dm755 hamr "$pkgdir/usr/bin/hamr"
+    cp -r share "$pkgdir/usr/"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/hamr/README.md"
+    install -Dm644 LICENSE-MIT LICENSE-APACHE -t "$pkgdir/usr/share/licenses/hamr"
+}

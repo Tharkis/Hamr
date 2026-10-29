@@ -16,6 +16,8 @@ licensed (MIT, Apache-2.0, BSD, Zlib or similar) to fit Hamr's MIT OR Apache-2.0
 - All lengths are millimetres. The world is right-handed with Z up.
 - Every exported or merged mesh must be watertight (closed, manifold, consistent winding).
 - Shared dependency versions go in `[workspace.dependencies]` in the root `Cargo.toml`.
+- Releases come from the Release workflow, run by hand on `main`; see AGENTS.md before changing
+  the version, the icon or anything in `packaging/`.
 
 Repo map, exact commands and known traps: [AGENTS.md](AGENTS.md). Keep this file and AGENTS.md up to
 date in the same PR as any change that makes them wrong (new crate, command, trap or convention).

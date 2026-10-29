@@ -1,0 +1,184 @@
+name: Release
+
+# Builds every installer and package. On a pull request that touches packaging it only builds
+# them (as workflow artifacts) so packaging breaks show up before merge. Run it by hand on main
+# to publish: it tags v<version from Cargo.toml> and creates the GitHub release.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "packaging/**"
+      - "assets/icon/**"
+      - "crates/hamr-app/Cargo.toml"
+      - "crates/hamr-app/build.rs"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Bundle the VC++ runtime next to the exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          foreach ($dll in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") {
+            $src = Join-Path $env:SystemRoot "System32\$dll"
+            if (Test-Path $src) { Copy-Item $src dist/windows/ }
+          }
+      - name: Installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:VERSION" packaging\windows\hamr.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $dir = "dist/Hamr-$env:VERSION-windows-x64"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target/release/hamr.exe, README.md, LICENSE-MIT, LICENSE-APACHE $dir
+          Copy-Item dist/windows/*.dll $dir -ErrorAction SilentlyContinue
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+
+  linux:
+    needs: version
+    # The oldest supported runner, so the binary runs on older glibc too.
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.1
+      - run: cargo build --release
+      - run: cargo deb -p hamr --no-build --output dist/
+      - run: cargo generate-rpm -p crates/hamr-app -o dist/
+      - name: Tarball
+        run: |
+          packaging/linux/stage.sh
+          cp -r dist/hamr-linux "dist/hamr-$VERSION-linux-x86_64"
+          tar -C dist -czf "dist/hamr-$VERSION-linux-x86_64.tar.gz" "hamr-$VERSION-linux-x86_64"
+      - name: AppImage
+        run: |
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          packaging/linux/build-appimage.sh "$VERSION" ./appimagetool
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/*.AppImage
+
+  arch:
+    needs: [version, linux]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: linux
+      - name: makepkg
+        run: |
+          useradd -m builder
+          mkdir -p /home/builder/pkg
+          sed "s/^pkgver=.*/pkgver=$VERSION/" packaging/arch/PKGBUILD > /home/builder/pkg/PKGBUILD
+          cp "linux/hamr-$VERSION-linux-x86_64.tar.gz" /home/builder/pkg/
+          chown -R builder /home/builder/pkg
+          su builder -c "cd /home/builder/pkg && makepkg --nodeps --noconfirm"
+          mkdir -p dist
+          cp /home/builder/pkg/*.pkg.tar.zst dist/
+          cp /home/builder/pkg/PKGBUILD dist/PKGBUILD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: dist/*
+
+  flatpak:
+    needs: [version, linux]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: linux
+      - name: Unpack the release build
+        run: |
+          mkdir -p dist
+          tar -C dist -xzf "linux/hamr-$VERSION-linux-x86_64.tar.gz"
+          mv "dist/hamr-$VERSION-linux-x86_64" dist/hamr-linux
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Hamr-${{ needs.version.outputs.version }}-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.tharkis.Hamr.yml
+          cache: false
+          upload-artifact: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: "*.flatpak"
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [version, windows, linux, arch, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create the release
+        run: |
+          ls -l artifacts
+          (cd artifacts && sha256sum * > SHA256SUMS.txt)
+          gh release create "v$VERSION" artifacts/* \
+            --target "$GITHUB_SHA" \
+            --title "Hamr $VERSION" \
+            --notes-file packaging/release-notes.md \
+            --generate-notes

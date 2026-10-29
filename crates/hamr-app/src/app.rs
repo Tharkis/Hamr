@@ -14,6 +14,7 @@ use hamr_core::grid::{Grid, LineVertex};
 use hamr_core::library::CustomPrim;
 use hamr_core::{History, Mesh, Object, OrbitCamera, PrimKind, PrimShape, Scene, Solid, Unit};
 
+use crate::about::About;
 use crate::print_check::PrintCheck;
 use crate::renderer::{MeshVertex, SceneGeometry, ViewportCallback, ViewportRenderer};
 use crate::{arrange_panel, files, library_panel, object_panel};
@@ -93,6 +94,7 @@ pub struct HamrApp {
     arrange: arrange_panel::Options,
     library: library_panel::Library,
     print_check: PrintCheck,
+    about: About,
     /// Generated meshes per object id, with the shape they were generated from.
     meshes: HashMap<u64, (MeshSource, Mesh)>,
     geometry: Arc<SceneGeometry>,
@@ -138,6 +140,7 @@ impl HamrApp {
             arrange: arrange_panel::Options::default(),
             library: library_panel::Library::load(),
             print_check: PrintCheck::default(),
+            about: About::default(),
             meshes: HashMap::new(),
             geometry: Arc::default(),
             dirty: true,
@@ -568,6 +571,11 @@ impl HamrApp {
                 }
                 if ui.checkbox(&mut self.show_grid, "Show grid").changed() {
                     self.dirty = true;
+                }
+            });
+            ui.menu_button("Help", |ui| {
+                if ui.button("About Hamr").clicked() {
+                    self.about.open = true;
                 }
             });
         });
@@ -1122,6 +1130,9 @@ impl eframe::App for HamrApp {
         self.confirm_dialog(&ctx, ui);
         if self.print_check.open {
             self.print_check.show(&ctx, &self.scene, self.unit);
+        }
+        if self.about.open {
+            self.about.show(&ctx);
         }
 
         // Gather edits into one undo step once the user lets go: after a drag, or when they
