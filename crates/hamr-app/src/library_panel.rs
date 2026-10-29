@@ -8,8 +8,8 @@ use hamr_core::library::{CustomPrim, EXTENSION};
 pub enum Action {
     /// Add the custom prim at this index to the scene.
     Place(usize),
-    /// Save the selection as a custom prim with this name.
-    Save(String),
+    /// Save the selection as a custom prim with this name, as one baked mesh or as a group.
+    Save { name: String, baked: bool },
 }
 
 /// How a selection is saved as a custom prim.
@@ -141,12 +141,10 @@ impl Library {
                 });
                 ui.radio_value(&mut self.save_as, SaveAs::Group, "Group of prims")
                     .on_hover_text("Each prim stays editable after it is added.");
-                ui.add_enabled_ui(false, |ui| {
-                    ui.radio_value(&mut self.save_as, SaveAs::Baked, "Baked mesh")
-                        .on_disabled_hover_text(
-                            "Merging prims into one solid mesh arrives with the export tools.",
-                        );
-                });
+                ui.radio_value(&mut self.save_as, SaveAs::Baked, "Baked mesh").on_hover_text(
+                    "The prims are merged into one solid, with negative prims cut out. It can be \
+                     moved and sized but its shape can't be edited.",
+                );
                 let name = name.trim().to_owned();
                 let mut close = false;
                 ui.horizontal(|ui| {
@@ -155,7 +153,10 @@ impl Library {
                         .add_enabled(can_save, egui::Button::new("Save"))
                         .clicked()
                     {
-                        action = Some(Action::Save(name));
+                        action = Some(Action::Save {
+                            name,
+                            baked: self.save_as == SaveAs::Baked,
+                        });
                         close = true;
                     }
                     close |= ui.button("Cancel").clicked();

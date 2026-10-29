@@ -1,11 +1,14 @@
 //! The objects being built and their placement in the world.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use glam::{EulerRot, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::prim::{PrimKind, PrimShape};
+use crate::mesh::Mesh;
+use crate::prim::{PrimKind, PrimShape, CREASE_DEGREES};
+use crate::Solid;
 
 /// Default edge length of a new prim, in millimetres.
 pub const DEFAULT_SIZE: f32 = 50.0;
@@ -34,9 +37,29 @@ pub struct Object {
     /// flips handedness, so triangles must be reversed to keep facing outwards.
     #[serde(default)]
     pub mirrored: bool,
+    /// A fixed surface in the unit box that replaces the prim shape, for custom prims saved as
+    /// a baked mesh. Shared, since history snapshots copy objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baked: Option<Arc<Solid>>,
 }
 
 impl Object {
+    /// The object's surface in its unit box: the baked mesh if it has one, else the prim.
+    pub fn solid(&self) -> Solid {
+        match &self.baked {
+            Some(solid) => Solid::clone(solid),
+            None => self.shape.solid(),
+        }
+    }
+
+    /// [`Object::solid`] with vertices split for shading.
+    pub fn mesh(&self) -> Mesh {
+        match &self.baked {
+            Some(solid) => solid.to_mesh(CREASE_DEGREES),
+            None => self.shape.mesh(),
+        }
+    }
+
     /// Maps the prim's unit box to the world.
     pub fn transform(&self) -> Mat4 {
         let flip = if self.mirrored {
@@ -162,6 +185,7 @@ impl Scene {
             negative: false,
             link: None,
             mirrored: false,
+            baked: None,
         });
         id
     }

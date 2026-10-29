@@ -9,23 +9,26 @@ no code from the Second Life viewer.
 
 ## Status
 
-Early development. You can create all seven Second Life prim types, select them, and edit their
-position, size, rotation, colour and every SL shape parameter. Prims can be marked negative to cut
-holes; the cut is applied when exporting, which comes in step 4. Move, rotate and stretch handles
-snap to the grid, every edit can be undone, and projects save to `.hamr` files. Prims can be linked
-into link sets, mirrored and repeated in arrays, and any selection can be saved as a custom prim to
-add again later. Saving a custom prim as one baked mesh, and export, come next.
+Early development, but the whole planned feature set works. You can create all seven Second Life
+prim types and edit their position, size, rotation, colour and every SL shape parameter. Move,
+rotate and stretch handles snap to the grid, every edit can be undone, and projects save to `.hamr`
+files. Prims can be linked, mirrored and repeated in arrays, and any selection can be saved as a
+custom prim, either as an editable group or as one baked mesh. Export merges everything into one
+watertight solid, cutting out negative prims, and writes STL, OBJ or glTF. A printability check
+warns about overhangs, floating pieces and models too big for the printer.
 
 | Milestone | Contents | State |
 | --- | --- | --- |
 | 1. Foundation | Window, viewport, camera, grid, units, CI | Done |
 | 2. Prim engine | Every SL prim type and parameter, hole-cutting prims, watertight tests | Done |
-| 3. Build tools | Move/rotate/stretch, snapping, linking, mirror and array, undo, saving, custom prim library | Done (baked custom prims arrive with step 4) |
-| 4. Export | STL, OBJ, glTF, merge into one solid, baked custom prims, printability check | Planned |
+| 3. Build tools | Move/rotate/stretch, snapping, linking, mirror and array, undo, saving, custom prim library | Done |
+| 4. Export | STL, OBJ, glTF, merge into one solid, baked custom prims, printability check | Done |
 
 ## Building
 
-Install Rust (1.85 or newer) from <https://rustup.rs>, then:
+Install Rust (1.85 or newer) from <https://rustup.rs>, CMake, and a C++ compiler (Visual Studio
+Build Tools on Windows, `g++` or `clang` on Linux). The first build downloads and compiles the
+[Manifold](https://github.com/elalish/manifold) geometry library, which takes a few minutes. Then:
 
 ```sh
 cargo run --release
@@ -58,6 +61,7 @@ Run the tests with `cargo test`.
 | Link, unlink | Ctrl+L, Ctrl+Shift+L |
 | Undo, redo | Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z |
 | New, open, save, save as | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
+| Export | Ctrl+E |
 
 Stretch handles resize from the opposite face, or around the centre with "Stretch both sides" on.
 Turn off "Snap to grid" for free movement; snapping uses the grid spacing and 15° steps.
@@ -71,8 +75,21 @@ The Build panel also has:
 - **Mirror**: flip the selection across a plane through the origin or through the selection, keeping
   the original or not.
 - **Array**: add copies in a row (count and offset) or around an axis (count, centre and angle).
-- **Custom prims**: save the selection under a name, then click it to add it again like a prim.
-  Right-click one to delete it from the library.
+- **Custom prims**: save the selection under a name, as a group of editable prims or as one baked
+  mesh, then click it to add it again like a prim. Right-click one to delete it from the library.
+
+## Exporting
+
+File > Export (Ctrl+E) merges every prim into one watertight solid, joining overlaps and cutting
+out negative prims, and saves it in the format of the extension you pick:
+
+- **STL**: binary, in millimetres, for slicers.
+- **OBJ**: in millimetres, with vertex colours.
+- **glTF** (`.glb`): in metres and Y up as glTF expects, with colours and normals, for game engines.
+
+File > Export selection does the same for the selected prims only. Tools > Check printability
+reports pieces that start in mid air, overhangs steeper than your printer manages, pieces too small
+to print and models larger than the build volume.
 
 ## Layout
 

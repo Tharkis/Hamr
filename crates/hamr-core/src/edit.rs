@@ -27,6 +27,7 @@ pub fn group_frame(objects: &[Object], rotation: Quat) -> Option<Object> {
         negative: false,
         link: None,
         mirrored: false,
+        baked: None,
     })
 }
 

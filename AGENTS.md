@@ -9,7 +9,7 @@ makes them wrong.
 
 | Path | What lives there |
 | --- | --- |
-| `crates/hamr-core` | UI-free logic: units, camera, grid, meshes (and later prims, booleans, export) |
+| `crates/hamr-core` | UI-free logic: units, camera, grid, meshes, prims, booleans, export |
 | `crates/hamr-core/src/units.rs` | `Unit` and mm conversions; lengths are always stored in mm |
 | `crates/hamr-core/src/camera.rs` | `OrbitCamera`, SL-style orbit / pan / zoom / focus |
 | `crates/hamr-core/src/mesh.rs` | `Mesh` and `Vertex`: render-ready, vertices split per corner for shading |
@@ -18,6 +18,9 @@ makes them wrong.
 | `crates/hamr-core/src/scene.rs` | `Scene` and `Object` (prim + position, rotation, size in mm, colour, negative flag) |
 | `crates/hamr-core/src/edit.rs` | Multi-prim edits: group frame and group transform for handles, mirror, linear and circular arrays |
 | `crates/hamr-core/src/library.rs` | `CustomPrim`: a saved selection (`.hamrprim` JSON) placed back as one link set |
+| `crates/hamr-core/src/merge.rs` | `merge`: union of positive prims minus negative ones via Manifold, into a `Model` (solid + corner colours) |
+| `crates/hamr-core/src/export.rs` | STL (binary), OBJ (vertex colours) and GLB (metres, Y up) writers for a `Model` |
+| `crates/hamr-core/src/printability.rs` | Printability check: build volume, floating and tiny pieces, overhangs |
 | `crates/hamr-core/src/history.rs` | `History`: snapshot undo/redo; `commit` turns changes since the last commit into one step |
 | `crates/hamr-core/src/project.rs` | `.hamr` project files: versioned JSON of the scene, `to_json` / `from_json` |
 | `crates/hamr-core/src/gizmo.rs` | Move/rotate/stretch handles: their lines, screen-space hit test, and `Drag` maths with snapping |
@@ -25,6 +28,7 @@ makes them wrong.
 | `crates/hamr-app/src/app.rs` | Window layout, menus, shortcuts, Build panel, viewport input, handles, picking, undo commits |
 | `crates/hamr-app/src/arrange_panel.rs` | Mirror and Array section of the Build panel |
 | `crates/hamr-app/src/library_panel.rs` | Custom prims section and the per-user library folder |
+| `crates/hamr-app/src/print_check.rs` | Printability check window and printer settings |
 | `crates/hamr-app/src/files.rs` | Open/save dialogs (rfd) and atomic project file writes |
 | `crates/hamr-app/src/object_panel.rs` | Object panel: placement and shape parameters of the selected prim |
 | `crates/hamr-app/src/renderer.rs`, `*.wgsl` | Viewport rendering (opaque, translucent negative prims, grid, overlay) and shaders |
@@ -69,7 +73,8 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
 - Full tapers stop at `MIN_TAPER_SCALE` and ring-like profiles stay just off the axis, so walls
   never fold onto each other. Twisted profiles get extra points along long edges
   (`MAX_TWISTED_EDGE`), and caps fan from a centre point to include them.
-- Negative prims only carry a flag for now; the subtraction happens at export (step 4).
+- Negative prims are only subtracted when merging (`merge.rs`), for export, the printability check
+  and baked custom prims. The viewport just draws them translucent.
 
 ## Editing and undo
 
@@ -85,10 +90,11 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
   evenly, since its prims may be turned any way.
 - Mirroring sets `Object::mirrored` (a flip of the prim's own X axis) and adjusts the rotation. The
   transform's determinant is then negative, so anything that builds triangles from it (the
-  renderer now, export later) must reverse their winding.
+  renderer and `merge::world_solid`) must reverse their winding.
 - Custom prims live in `%APPDATA%\Hamr\prims` on Windows and `$XDG_DATA_HOME/hamr/prims` (or
-  `~/.local/share/hamr/prims`) elsewhere. Only "group of prims" saving works so far; "baked mesh"
-  needs the boolean union from step 4.
+  `~/.local/share/hamr/prims`) elsewhere. A baked custom prim is one `Object` whose `baked` solid
+  (in the unit box) replaces its prim shape; use `Object::solid` / `Object::mesh`, never
+  `object.shape` directly, for geometry. Loading rejects baked meshes that aren't closed.
 - Unsaved changes are `scene != saved`, so undoing back to the saved state clears the `*` in the
   title.
 
@@ -100,6 +106,11 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
 - Windows is a supported target: avoid Unix-only paths, shell calls and APIs in app code.
 - `hamr-core` is built with `opt-level = 2` in dev (root `Cargo.toml`); without it the prim test
   grid takes about 30 s instead of 2 s.
+- The first build compiles the Manifold C++ library, so it needs CMake, a C++ compiler and network
+  access (the `manifold-csg-sys` build script clones Manifold with git). It takes a few minutes;
+  later builds are cached. TBB is off (`default-features = false`).
+- `rfd` file dialogs don't open under Xvfb (no desktop portal), so export and open/save can't be
+  driven headless; test the writers through `hamr-core` instead.
 - `xdotool windowclose` destroys the window instead of asking it to close, so it skips the
   unsaved-changes prompt; test that through File > Quit.
 - egui `DragValue`s can be set from xdotool by clicking one, then `ctrl+a`, then

@@ -64,7 +64,15 @@ pub fn show(ui: &mut Ui, object: &mut Object, unit: Unit) -> Outcome {
 
     ui.separator();
     ui.strong("Shape");
-    changed |= shape_editor(ui, &mut object.shape);
+    match &object.baked {
+        Some(solid) => {
+            ui.label(format!(
+                "Baked mesh, {} triangles. Its shape is fixed.",
+                solid.triangles.len()
+            ));
+        }
+        None => changed |= shape_editor(ui, &mut object.shape),
+    }
 
     ui.separator();
     if ui.button("Delete").clicked() {

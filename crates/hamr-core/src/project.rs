@@ -24,6 +24,8 @@ pub enum ProjectError {
     NotAProject,
     /// The file was written by a newer Hamr.
     TooNew(u32),
+    /// A baked mesh in the file is not a closed surface, so it could not be exported.
+    DamagedMesh(String),
 }
 
 impl std::fmt::Display for ProjectError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for ProjectError {
                 f,
                 "this project was saved by a newer version of Hamr (format {v}); please update Hamr"
             ),
+            ProjectError::DamagedMesh(name) => write!(f, "the baked mesh of {name} is damaged"),
         }
     }
 }
@@ -65,7 +68,7 @@ pub fn from_json(text: &str) -> Result<Scene, ProjectError> {
         return Err(ProjectError::TooNew(header.version));
     }
     let file: ProjectFile = serde_json::from_str(text).map_err(ProjectError::Invalid)?;
-    let objects = file
+    let objects: Vec<Object> = file
         .objects
         .into_iter()
         .map(|mut o| {
@@ -74,7 +77,23 @@ pub fn from_json(text: &str) -> Result<Scene, ProjectError> {
             o
         })
         .collect();
+    check_baked(&objects)?;
     Ok(Scene::from_objects(objects))
+}
+
+/// Rejects baked meshes that aren't closed surfaces inside their unit box.
+pub(crate) fn check_baked(objects: &[Object]) -> Result<(), ProjectError> {
+    for o in objects {
+        let Some(solid) = &o.baked else { continue };
+        let inside = solid
+            .positions
+            .iter()
+            .all(|p| p.is_finite() && p.abs().max_element() <= 0.5 + 1e-4);
+        if !inside || solid.triangles.is_empty() || solid.check_closed().is_err() {
+            return Err(ProjectError::DamagedMesh(o.name.clone()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
