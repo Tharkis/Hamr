@@ -8,7 +8,8 @@ documentation (the SL wiki and knowledge base), but never copy code, shaders or 
 Life viewer, and don't paste its source into the repo or a PR. New dependencies must be permissively
 licensed (MIT, Apache-2.0, BSD, Zlib or similar) to fit Hamr's MIT OR Apache-2.0 licence.
 
-- Build: `cargo build`; run: `cargo run --release`; test: `cargo test --all`.
+- Build: `cargo build` (needs CMake and a C++ compiler for Manifold); run: `cargo run --release`;
+  test: `cargo test --all`.
 - Lint like CI: `cargo fmt --all --check` and `cargo clippy --all-targets -- -D warnings`.
 - `hamr-core` holds geometry, prims, camera and units with no UI or GPU code; keep it that way so it
   stays testable without a window. `hamr-app` is the egui + wgpu desktop app.

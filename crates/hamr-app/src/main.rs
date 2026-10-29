@@ -8,6 +8,7 @@ mod arrange_panel;
 mod files;
 mod library_panel;
 mod object_panel;
+mod print_check;
 mod renderer;
 
 fn main() -> eframe::Result {

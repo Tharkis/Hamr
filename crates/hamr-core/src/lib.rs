@@ -4,12 +4,15 @@
 
 pub mod camera;
 pub mod edit;
+pub mod export;
 pub mod gizmo;
 pub mod grid;
 pub mod history;
 pub mod library;
+pub mod merge;
 pub mod mesh;
 pub mod prim;
+pub mod printability;
 pub mod project;
 pub mod scene;
 pub mod solid;

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Mesh, Solid};
 
 /// Normals across edges sharper than this stay hard; smoother edges are shaded smooth.
-const CREASE_DEGREES: f32 = 40.0;
+pub const CREASE_DEGREES: f32 = 40.0;
 
 /// The seven SL building block types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

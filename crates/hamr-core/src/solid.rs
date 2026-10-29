@@ -4,12 +4,13 @@
 use std::collections::HashMap;
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 use crate::mesh::{Mesh, Vertex, WatertightError};
 
 /// An indexed surface. Unlike [`Mesh`], which splits vertices for shading, a solid shares each
 /// vertex between all the triangles that touch it, so its connectivity can be checked and kept.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Solid {
     pub positions: Vec<Vec3>,
     /// Counter-clockwise when seen from outside.

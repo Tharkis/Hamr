@@ -12,8 +12,9 @@ rust-version = "1.85"
 [workspace.dependencies]
 glam = { version = "0.34", features = ["bytemuck", "serde"] }
 bytemuck = { version = "1", features = ["derive"] }
+manifold3d = { version = "0.4.1", default-features = false }
 earcut = "0.4"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 
 # Prim generation is heavy enough that unoptimised debug builds make the tests and the app slow.

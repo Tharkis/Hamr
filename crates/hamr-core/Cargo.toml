@@ -11,5 +11,6 @@ rust-version.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 earcut.workspace = true
+manifold3d.workspace = true
 serde.workspace = true
 serde_json.workspace = true

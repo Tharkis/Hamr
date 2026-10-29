@@ -12,8 +12,9 @@ use hamr_core::edit;
 use hamr_core::gizmo::{self, Drag, Handle, Snap, Tool};
 use hamr_core::grid::{Grid, LineVertex};
 use hamr_core::library::CustomPrim;
-use hamr_core::{History, Mesh, Object, OrbitCamera, PrimKind, PrimShape, Scene, Unit};
+use hamr_core::{History, Mesh, Object, OrbitCamera, PrimKind, PrimShape, Scene, Solid, Unit};
 
+use crate::print_check::PrintCheck;
 use crate::renderer::{MeshVertex, SceneGeometry, ViewportCallback, ViewportRenderer};
 use crate::{arrange_panel, files, library_panel, object_panel};
 
@@ -41,6 +42,7 @@ const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S)
 const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 const DUPLICATE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
+const EXPORT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::E);
 const LINK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::L);
 const UNLINK: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::L);
@@ -51,6 +53,24 @@ enum Discard {
     New,
     Open,
     Quit,
+}
+
+/// What a cached mesh was generated from. Baked meshes compare by identity, since they never
+/// change once made and comparing their contents every frame would be slow.
+#[derive(Clone)]
+enum MeshSource {
+    Prim(PrimShape),
+    Baked(Arc<Solid>),
+}
+
+impl PartialEq for MeshSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MeshSource::Prim(a), MeshSource::Prim(b)) => a == b,
+            (MeshSource::Baked(a), MeshSource::Baked(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// A handle drag in progress: the frame the handles were on and the prims as they were.
@@ -72,8 +92,9 @@ pub struct HamrApp {
     edit_linked: bool,
     arrange: arrange_panel::Options,
     library: library_panel::Library,
+    print_check: PrintCheck,
     /// Generated meshes per object id, with the shape they were generated from.
-    meshes: HashMap<u64, (PrimShape, Mesh)>,
+    meshes: HashMap<u64, (MeshSource, Mesh)>,
     geometry: Arc<SceneGeometry>,
     dirty: bool,
     history: History,
@@ -116,6 +137,7 @@ impl HamrApp {
             edit_linked: false,
             arrange: arrange_panel::Options::default(),
             library: library_panel::Library::load(),
+            print_check: PrintCheck::default(),
             meshes: HashMap::new(),
             geometry: Arc::default(),
             dirty: true,
@@ -302,6 +324,22 @@ impl HamrApp {
         self.dirty = true;
     }
 
+    /// Merges the scene, or just the selection, into one solid and writes it where the user picks.
+    fn export(&mut self, selection_only: bool) {
+        let objects: Vec<Object> = if selection_only {
+            self.selected_objects()
+        } else {
+            self.scene.objects.clone()
+        };
+        if objects.is_empty() {
+            return;
+        }
+        let Some(path) = files::pick_export(self.path.as_deref()) else {
+            return;
+        };
+        self.message = files::export(&path, &objects).err();
+    }
+
     fn snap(&self) -> Option<Snap> {
         self.snap.then_some(Snap {
             grid: self.grid.spacing,
@@ -310,12 +348,16 @@ impl HamrApp {
     }
 
     /// The object's unit-box mesh, regenerated only when its shape has changed.
-    fn mesh_for<'a>(meshes: &'a mut HashMap<u64, (PrimShape, Mesh)>, object: &Object) -> &'a Mesh {
+    fn mesh_for<'a>(meshes: &'a mut HashMap<u64, (MeshSource, Mesh)>, object: &Object) -> &'a Mesh {
+        let source = match &object.baked {
+            Some(solid) => MeshSource::Baked(solid.clone()),
+            None => MeshSource::Prim(object.shape.clone()),
+        };
         let entry = meshes
             .entry(object.id)
-            .or_insert_with(|| (object.shape.clone(), object.shape.mesh()));
-        if entry.0 != object.shape {
-            *entry = (object.shape.clone(), object.shape.mesh());
+            .or_insert_with(|| (source.clone(), object.mesh()));
+        if entry.0 != source {
+            *entry = (source, object.mesh());
         }
         &entry.1
     }
@@ -457,6 +499,21 @@ impl HamrApp {
                     self.save_project(true);
                 }
                 ui.separator();
+                let has_objects = !self.scene.objects.is_empty();
+                if ui
+                    .add_enabled(has_objects, egui::Button::new("Export…").shortcut_text(shortcut(&EXPORT)))
+                    .on_hover_text("Merge everything into one watertight solid and save it as STL, OBJ or glTF.")
+                    .clicked()
+                {
+                    self.export(false);
+                }
+                if ui
+                    .add_enabled(!self.selection.is_empty(), egui::Button::new("Export selection…"))
+                    .clicked()
+                {
+                    self.export(true);
+                }
+                ui.separator();
                 if ui.button("Quit").clicked() {
                     self.request(&ctx, Discard::Quit);
                 }
@@ -489,6 +546,17 @@ impl HamrApp {
                 let unlink = egui::Button::new("Unlink").shortcut_text(shortcut(&UNLINK));
                 if ui.add_enabled(selected, unlink).clicked() {
                     self.unlink_selected();
+                }
+            });
+            ui.menu_button("Tools", |ui| {
+                if ui
+                    .add_enabled(
+                        !self.scene.objects.is_empty(),
+                        egui::Button::new("Check printability…"),
+                    )
+                    .clicked()
+                {
+                    self.print_check.open(&self.scene);
                 }
             });
             ui.menu_button("View", |ui| {
@@ -609,10 +677,17 @@ impl HamrApp {
                     self.dirty = true;
                 }
             }
-            Some(library_panel::Action::Save(name)) => {
-                if let Some(prim) = CustomPrim::from_selection(&self.scene, &self.selection, &name)
-                {
-                    self.library.save(prim);
+            Some(library_panel::Action::Save { name, baked }) => {
+                let prim = if baked {
+                    CustomPrim::baked_from_selection(&self.scene, &self.selection, &name)
+                        .map_err(|e| format!("Couldn't bake {name}: {e}"))
+                } else {
+                    CustomPrim::from_selection(&self.scene, &self.selection, &name)
+                        .ok_or_else(|| "Nothing is selected.".to_owned())
+                };
+                match prim {
+                    Ok(prim) => self.library.save(prim),
+                    Err(e) => self.message = Some(e),
                 }
             }
             None => {}
@@ -933,7 +1008,7 @@ impl HamrApp {
         // Ctrl+Shift+Z.
         let pressed = ctx.input_mut(|i| {
             [
-                REDO_SHIFT, REDO, UNDO, SAVE_AS, SAVE, OPEN, NEW, DUPLICATE, UNLINK, LINK,
+                REDO_SHIFT, REDO, UNDO, SAVE_AS, SAVE, OPEN, NEW, DUPLICATE, UNLINK, LINK, EXPORT,
             ]
             .into_iter()
             .find(|s| i.consume_shortcut(s))
@@ -952,6 +1027,7 @@ impl HamrApp {
             Some(s) if s == DUPLICATE => self.duplicate_selected(),
             Some(s) if s == UNLINK => self.unlink_selected(),
             Some(s) if s == LINK => self.link_selected(),
+            Some(s) if s == EXPORT => self.export(false),
             _ => {}
         }
         if self.drag.is_none() {
@@ -1044,6 +1120,9 @@ impl eframe::App for HamrApp {
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport(ui));
         self.confirm_dialog(&ctx, ui);
+        if self.print_check.open {
+            self.print_check.show(&ctx, &self.scene, self.unit);
+        }
 
         // Gather edits into one undo step once the user lets go: after a drag, or when they
         // leave a text field or slider.

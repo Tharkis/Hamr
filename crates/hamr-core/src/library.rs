@@ -1,10 +1,13 @@
 //! Custom prims: a model saved so it can be added again later, like one of the built-in prims.
 
+use std::sync::Arc;
+
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::merge::{self, MergeError};
 use crate::project::ProjectError;
-use crate::{Object, Scene};
+use crate::{Object, PrimKind, PrimShape, Scene};
 
 /// File extension of custom prim files, without the dot.
 pub const EXTENSION: &str = "hamrprim";
@@ -58,6 +61,50 @@ impl CustomPrim {
         })
     }
 
+    /// The prims `ids` merged into one solid, with negative prims cut out, as a custom prim that
+    /// is a single baked mesh. It takes the colour of the first positive prim.
+    pub fn baked_from_selection(
+        scene: &Scene,
+        ids: &[u64],
+        name: &str,
+    ) -> Result<Self, MergeError> {
+        let objects: Vec<&Object> = ids.iter().filter_map(|&id| scene.get(id)).collect();
+        let model = merge::merge(objects.iter().copied())?;
+        let (lo, hi) = model
+            .solid
+            .positions
+            .iter()
+            .fold((Vec3::MAX, Vec3::MIN), |(lo, hi), &p| {
+                (lo.min(p), hi.max(p))
+            });
+        let size = (hi - lo).max(Vec3::splat(crate::gizmo::MIN_SIZE_MM));
+        let center = (lo + hi) * 0.5;
+        let mut unit = model.solid;
+        for p in &mut unit.positions {
+            *p = ((*p - center) / size).clamp(Vec3::splat(-0.5), Vec3::splat(0.5));
+        }
+        let color = objects
+            .iter()
+            .find(|o| !o.negative)
+            .map_or([0.8, 0.8, 0.8, 1.0], |o| o.color);
+        Ok(Self {
+            name: name.to_owned(),
+            objects: vec![Object {
+                id: 1,
+                name: name.to_owned(),
+                shape: PrimShape::new(PrimKind::Box),
+                position: Vec3::new(0.0, 0.0, size.z * 0.5),
+                rotation: Quat::IDENTITY,
+                size,
+                color,
+                negative: false,
+                link: None,
+                mirrored: false,
+                baked: Some(Arc::new(unit)),
+            }],
+        })
+    }
+
     /// Adds a copy to `scene` resting on the ground at `at` (Z is ignored) and returns the new
     /// ids, root first.
     pub fn place(&self, scene: &mut Scene, at: Vec3) -> Vec<u64> {
@@ -108,6 +155,7 @@ impl CustomPrim {
             })
             .collect();
         let objects = Scene::from_objects(objects).objects;
+        crate::project::check_baked(&objects)?;
         if objects.is_empty() {
             return Err(ProjectError::NotAProject);
         }
@@ -151,6 +199,49 @@ mod tests {
         // The prims keep their places relative to each other.
         let gap = scene.get(placed[1]).unwrap().position - scene.get(placed[0]).unwrap().position;
         assert!((gap - Vec3::new(60.0, 0.0, 40.0)).length() < 1e-3);
+    }
+
+    #[test]
+    fn baked_prims_keep_the_merged_shape() {
+        // A baked custom prim must reproduce the merged model (holes included) wherever it is
+        // placed, survive saving, and still merge and export as a watertight solid.
+        let mut scene = Scene::default();
+        let a = scene.add_prim(PrimKind::Box, Vec3::ZERO);
+        let b = scene.add_prim(PrimKind::Sphere, Vec3::new(30.0, 0.0, 0.0));
+        let hole = scene.add_prim(PrimKind::Cylinder, Vec3::ZERO);
+        let h = scene.get_mut(hole).unwrap();
+        h.negative = true;
+        h.size = Vec3::new(10.0, 10.0, 80.0);
+        let ids = [a, b, hole];
+        let original = merge::merge(ids.iter().map(|&id| scene.get(id).unwrap())).unwrap();
+
+        let custom = CustomPrim::baked_from_selection(&scene, &ids, "Knob").unwrap();
+        let custom = CustomPrim::from_json(&custom.to_json()).unwrap();
+        assert_eq!(custom.objects.len(), 1);
+
+        let mut other = Scene::default();
+        let placed = custom.place(&mut other, Vec3::new(100.0, -50.0, 0.0));
+        let baked = merge::merge(&other.objects).unwrap();
+        baked.solid.check_closed().unwrap();
+        let (v0, v1) = (original.solid.signed_volume(), baked.solid.signed_volume());
+        assert!((v0 - v1).abs() < v0 * 1e-3, "{v0} vs {v1}");
+        // It rests on the ground at the spot it was placed.
+        let o = other.get(placed[0]).unwrap();
+        assert!((o.position.z - o.size.z * 0.5).abs() < 1e-3);
+        assert!((o.position.x - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn damaged_baked_meshes_are_rejected() {
+        let mut scene = Scene::default();
+        let a = scene.add_prim(PrimKind::Box, Vec3::ZERO);
+        let mut custom = CustomPrim::baked_from_selection(&scene, &[a], "Cube").unwrap();
+        let solid = Arc::make_mut(custom.objects[0].baked.as_mut().unwrap());
+        solid.triangles.pop();
+        assert!(matches!(
+            CustomPrim::from_json(&custom.to_json()),
+            Err(ProjectError::DamagedMesh(_))
+        ));
     }
 
     #[test]
