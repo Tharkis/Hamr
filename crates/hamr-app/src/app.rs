@@ -6,14 +6,16 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, PointerButton, Sense};
 use eframe::egui_wgpu;
-use glam::{Vec2, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use hamr_core::camera::ray_ground;
+use hamr_core::edit;
 use hamr_core::gizmo::{self, Drag, Handle, Snap, Tool};
 use hamr_core::grid::{Grid, LineVertex};
+use hamr_core::library::CustomPrim;
 use hamr_core::{History, Mesh, Object, OrbitCamera, PrimKind, PrimShape, Scene, Unit};
 
 use crate::renderer::{MeshVertex, SceneGeometry, ViewportCallback, ViewportRenderer};
-use crate::{files, object_panel};
+use crate::{arrange_panel, files, library_panel, object_panel};
 
 /// Radians of orbit per pixel of mouse movement.
 const ORBIT_SPEED: f32 = 0.008;
@@ -22,6 +24,8 @@ const DRAG_ZOOM_SPEED: f32 = 0.005;
 /// Colour of negative prims, which are drawn see-through.
 const NEGATIVE_COLOR: [f32; 4] = [0.9, 0.2, 0.15, 0.35];
 const SELECTION_COLOR: [f32; 4] = [1.0, 0.85, 0.2, 1.0];
+/// Outline of selected prims that are linked children rather than roots.
+const LINKED_COLOR: [f32; 4] = [0.35, 0.65, 1.0, 1.0];
 /// Colour of the handle under the cursor or being dragged.
 const ACTIVE_HANDLE_COLOR: [f32; 4] = [1.0, 1.0, 0.4, 1.0];
 /// Rotation snaps to multiples of this many degrees.
@@ -37,6 +41,9 @@ const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S)
 const SAVE_AS: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 const DUPLICATE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
+const LINK: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::L);
+const UNLINK: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::L);
 
 /// Something that would throw away unsaved work, waiting for the user to confirm.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,13 +53,25 @@ enum Discard {
     Quit,
 }
 
+/// A handle drag in progress: the frame the handles were on and the prims as they were.
+struct GroupDrag {
+    drag: Drag,
+    frame: Object,
+    objects: Vec<Object>,
+}
+
 pub struct HamrApp {
     camera: OrbitCamera,
     grid: Grid,
     show_grid: bool,
     unit: Unit,
     scene: Scene,
-    selected: Option<u64>,
+    /// Selected prims, in the order they were picked; the last one is shown in the Object panel.
+    selection: Vec<u64>,
+    /// Pick single prims instead of whole link sets, like SL's "Edit linked".
+    edit_linked: bool,
+    arrange: arrange_panel::Options,
+    library: library_panel::Library,
     /// Generated meshes per object id, with the shape they were generated from.
     meshes: HashMap<u64, (PrimShape, Mesh)>,
     geometry: Arc<SceneGeometry>,
@@ -65,7 +84,7 @@ pub struct HamrApp {
     tool: Tool,
     snap: bool,
     stretch_both_sides: bool,
-    drag: Option<Drag>,
+    drag: Option<GroupDrag>,
     hovered_handle: Option<Handle>,
     /// An action waiting for "discard unsaved changes?" to be answered.
     confirm: Option<Discard>,
@@ -93,7 +112,10 @@ impl HamrApp {
             show_grid: true,
             unit: Unit::default(),
             scene: Scene::default(),
-            selected: None,
+            selection: Vec::new(),
+            edit_linked: false,
+            arrange: arrange_panel::Options::default(),
+            library: library_panel::Library::load(),
             meshes: HashMap::new(),
             geometry: Arc::default(),
             dirty: true,
@@ -120,9 +142,8 @@ impl HamrApp {
     fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
         self.drag = None;
-        if self.selected.is_some_and(|id| self.scene.get(id).is_none()) {
-            self.selected = None;
-        }
+        let scene = &self.scene;
+        self.selection.retain(|&id| scene.get(id).is_some());
         self.dirty = true;
     }
 
@@ -209,12 +230,76 @@ impl HamrApp {
     }
 
     fn duplicate_selected(&mut self) {
-        let Some(id) = self.selected else { return };
         // Offset the copy by one grid step so it doesn't hide the original.
-        if let Some(copy) = self.scene.duplicate(id, Vec3::X * self.grid.spacing) {
-            self.selected = Some(copy);
+        self.selection = self
+            .scene
+            .duplicate_all(&self.selection, Vec3::X * self.grid.spacing);
+        self.dirty = true;
+    }
+
+    fn selected_objects(&self) -> Vec<Object> {
+        self.selection
+            .iter()
+            .filter_map(|&id| self.scene.get(id))
+            .cloned()
+            .collect()
+    }
+
+    /// What the handles act on: the one selected prim, or a box around several. A box around a
+    /// whole link set lines up with its root prim, as in SL.
+    fn selection_frame(&self) -> Option<Object> {
+        let objects = self.selected_objects();
+        if let [one] = objects.as_slice() {
+            return Some(one.clone());
+        }
+        let first = objects.first()?;
+        let root = self.scene.root_of(first.id);
+        let one_set = objects.iter().all(|o| self.scene.root_of(o.id) == root);
+        let rotation = match self.scene.get(root) {
+            Some(r) if one_set && self.selection.contains(&root) => r.rotation,
+            _ => Quat::IDENTITY,
+        };
+        edit::group_frame(&objects, rotation)
+    }
+
+    /// Selects what was clicked: the prim, or its whole link set unless editing linked parts.
+    /// With `add`, toggles it in the selection instead of replacing the selection.
+    fn select(&mut self, id: Option<u64>, add: bool) {
+        let picked = match id {
+            Some(id) if self.edit_linked => vec![id],
+            Some(id) => {
+                // A link set's root goes last, so it becomes the prim the Object panel shows.
+                let mut set = self.scene.link_set(id);
+                if !set.is_empty() {
+                    set.rotate_left(1);
+                }
+                set
+            }
+            None => Vec::new(),
+        };
+        let all_selected = picked.iter().all(|id| self.selection.contains(id));
+        if !add {
+            self.selection = picked;
+        } else if !picked.is_empty() && all_selected {
+            self.selection.retain(|id| !picked.contains(id));
+        } else {
+            self.selection.retain(|id| !picked.contains(id));
+            self.selection.extend(picked);
+        }
+        self.dirty = true;
+    }
+
+    /// Links the selected prims into one link set. The last prim picked becomes the root.
+    fn link_selected(&mut self) {
+        if let Some(&root) = self.selection.last() {
+            self.scene.link(&self.selection, root);
             self.dirty = true;
         }
+    }
+
+    fn unlink_selected(&mut self) {
+        self.scene.unlink(&self.selection);
+        self.dirty = true;
     }
 
     fn snap(&self) -> Option<Snap> {
@@ -278,9 +363,16 @@ impl HamrApp {
                         color,
                     }
                 }));
-                geometry
-                    .mesh_indices
-                    .extend(mesh.indices.iter().map(|i| base + i));
+                // A mirrored prim turns inside out, so its triangles are reversed to keep facing
+                // outwards.
+                for t in mesh.indices.chunks_exact(3) {
+                    let t = if object.mirrored {
+                        [t[0], t[2], t[1]]
+                    } else {
+                        [t[0], t[1], t[2]]
+                    };
+                    geometry.mesh_indices.extend(t.map(|i| base + i));
+                }
             }
             if !negative_pass {
                 geometry.opaque_index_count = geometry.mesh_indices.len() as u32;
@@ -315,7 +407,7 @@ impl HamrApp {
     fn frame_all(&mut self) {
         let corners = self.scene.objects.iter().flat_map(|o| {
             let m = o.transform();
-            unit_box_corners().map(move |c| m.transform_point3(c))
+            hamr_core::mesh::unit_box_corners().map(move |c| m.transform_point3(c))
         });
         let Some((lo, hi)) = corners.fold(None, |acc: Option<(Vec3, Vec3)>, p| {
             Some(acc.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p))))
@@ -329,10 +421,10 @@ impl HamrApp {
     }
 
     fn delete_selected(&mut self) {
-        if let Some(id) = self.selected.take() {
+        for id in std::mem::take(&mut self.selection) {
             self.scene.remove(id);
-            self.dirty = true;
         }
+        self.dirty = true;
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -380,7 +472,7 @@ impl HamrApp {
                     self.redo();
                 }
                 ui.separator();
-                let selected = self.selected.is_some();
+                let selected = !self.selection.is_empty();
                 let dup = egui::Button::new("Duplicate").shortcut_text(shortcut(&DUPLICATE));
                 if ui.add_enabled(selected, dup).clicked() {
                     self.duplicate_selected();
@@ -388,6 +480,15 @@ impl HamrApp {
                 let delete = egui::Button::new("Delete").shortcut_text("Delete");
                 if ui.add_enabled(selected, delete).clicked() {
                     self.delete_selected();
+                }
+                ui.separator();
+                let link = egui::Button::new("Link").shortcut_text(shortcut(&LINK));
+                if ui.add_enabled(self.selection.len() > 1, link).clicked() {
+                    self.link_selected();
+                }
+                let unlink = egui::Button::new("Unlink").shortcut_text(shortcut(&UNLINK));
+                if ui.add_enabled(selected, unlink).clicked() {
+                    self.unlink_selected();
                 }
             });
             ui.menu_button("View", |ui| {
@@ -426,6 +527,9 @@ impl HamrApp {
             .on_hover_text(
                 "Stretch symmetrically around the centre instead of from the opposite face.",
             );
+        ui.checkbox(&mut self.edit_linked, "Edit linked parts").on_hover_text(
+            "Click picks single prims instead of whole link sets. Shift-click adds to the selection.",
+        );
         ui.weak("Shift-drag an arrow to leave a copy behind.");
         ui.separator();
         ui.label("Create");
@@ -437,11 +541,15 @@ impl HamrApp {
                     .clicked()
                 {
                     let id = self.scene.add_prim(kind, self.camera.focus);
-                    self.selected = Some(id);
+                    self.selection = vec![id];
                     self.dirty = true;
                 }
             }
         });
+        ui.separator();
+        self.custom_prims(ui);
+        ui.separator();
+        self.arrange(ui);
         ui.separator();
 
         ui.label("Units");
@@ -466,24 +574,107 @@ impl HamrApp {
 
         ui.separator();
         ui.label(format!("Objects ({})", self.scene.objects.len()));
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for object in &self.scene.objects {
-                let selected = self.selected == Some(object.id);
-                let label = if object.negative {
-                    format!("{} (negative)", object.name)
-                } else {
-                    object.name.clone()
+        // Link sets are listed root first, with their children indented below.
+        let mut clicked = None;
+        for root in self.scene.objects.iter().filter(|o| o.link.is_none()) {
+            for id in self.scene.link_set(root.id) {
+                let Some(object) = self.scene.get(id) else {
+                    continue;
                 };
+                let mut label = object.name.clone();
+                if object.negative {
+                    label.push_str(" (negative)");
+                }
+                if object.link.is_some() {
+                    label = format!("    {label}");
+                }
+                let selected = self.selection.contains(&id);
                 if ui.selectable_label(selected, label).clicked() {
-                    self.selected = Some(object.id);
+                    clicked = Some(id);
+                }
+            }
+        }
+        if let Some(id) = clicked {
+            let add = ui.input(|i| i.modifiers.shift);
+            self.select(Some(id), add);
+        }
+    }
+
+    fn custom_prims(&mut self, ui: &mut egui::Ui) {
+        let has_selection = !self.selection.is_empty();
+        match self.library.show(ui, has_selection) {
+            Some(library_panel::Action::Place(index)) => {
+                if let Some(prim) = self.library.get(index) {
+                    self.selection = prim.place(&mut self.scene, self.camera.focus);
                     self.dirty = true;
                 }
             }
-        });
+            Some(library_panel::Action::Save(name)) => {
+                if let Some(prim) = CustomPrim::from_selection(&self.scene, &self.selection, &name)
+                {
+                    self.library.save(prim);
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn arrange(&mut self, ui: &mut egui::Ui) {
+        let Some(action) =
+            arrange_panel::show(ui, &mut self.arrange, self.unit, !self.selection.is_empty())
+        else {
+            return;
+        };
+        let objects = self.selected_objects();
+        let Some(bounds) = edit::group_frame(&objects, Quat::IDENTITY) else {
+            return;
+        };
+        match action {
+            arrange_panel::Action::Mirror {
+                axis,
+                copy,
+                at_origin,
+            } => {
+                if copy {
+                    self.selection = self.scene.duplicate_all(&self.selection, Vec3::ZERO);
+                }
+                let center = if at_origin {
+                    Vec3::ZERO
+                } else {
+                    bounds.position
+                };
+                edit::mirror(&mut self.scene, &self.selection, axis, center);
+            }
+            arrange_panel::Action::Array => {
+                let o = &self.arrange;
+                let copies = if o.circular {
+                    let mut axis = Vec3::ZERO;
+                    axis[o.axis] = 1.0;
+                    edit::array_circular(
+                        &mut self.scene,
+                        &self.selection,
+                        o.count,
+                        axis,
+                        o.center,
+                        o.angle,
+                    )
+                } else {
+                    edit::array_linear(&mut self.scene, &self.selection, o.count, o.offset)
+                };
+                self.selection.extend(copies);
+            }
+        }
+        self.dirty = true;
     }
 
     fn object_panel(&mut self, ui: &mut egui::Ui) {
-        let Some(object) = self.selected.and_then(|id| self.scene.get_mut(id)) else {
+        if self.selection.len() > 1 {
+            ui.weak(format!(
+                "{} prims selected. The panel edits the last one picked.",
+                self.selection.len()
+            ));
+        }
+        let Some(object) = self.selection.last().and_then(|&id| self.scene.get_mut(id)) else {
             return;
         };
         match object_panel::show(ui, object, self.unit) {
@@ -513,14 +704,27 @@ impl HamrApp {
         });
     }
 
-    /// Lines drawn on top of the scene: the selection box and the active tool's handles.
+    /// Lines drawn on top of the scene: the selection boxes and the active tool's handles. Roots
+    /// and unlinked prims are outlined in yellow and linked children in blue, as in SL.
     fn overlay(&self, eye: Vec3) -> Vec<LineVertex> {
-        let Some(object) = self.selected.and_then(|id| self.scene.get(id)) else {
-            return Vec::new();
+        let mut lines = Vec::new();
+        for object in self.selected_objects() {
+            let color = if object.link.is_some() {
+                LINKED_COLOR
+            } else {
+                SELECTION_COLOR
+            };
+            lines.extend(box_outline(&object, color));
+        }
+        let Some(frame) = self.selection_frame() else {
+            return lines;
         };
-        let mut lines = box_outline(object);
-        let active = self.drag.as_ref().map(|d| d.handle).or(self.hovered_handle);
-        for h in gizmo::handles(self.tool, object, eye) {
+        let active = self
+            .drag
+            .as_ref()
+            .map(|d| d.drag.handle)
+            .or(self.hovered_handle);
+        for h in gizmo::handles(self.tool, &frame, eye) {
             let color = if Some(h.handle) == active {
                 ACTIVE_HANDLE_COLOR
             } else {
@@ -584,12 +788,12 @@ impl HamrApp {
             self.camera.ray(ndc, aspect)
         };
 
-        // Handles of the selected object, hit-tested in points relative to the viewport.
+        // Handles of the selection, hit-tested in points relative to the viewport.
         let eye = self.camera.eye();
-        let handles = self
-            .selected
-            .and_then(|id| self.scene.get(id))
-            .map(|o| gizmo::handles(self.tool, o, eye))
+        let frame = self.selection_frame();
+        let handles = frame
+            .as_ref()
+            .map(|f| gizmo::handles(self.tool, f, eye))
             .unwrap_or_default();
         self.hovered_handle = match (self.drag.as_ref(), response.hover_pos()) {
             (Some(_), _) => None,
@@ -603,32 +807,44 @@ impl HamrApp {
         };
 
         if response.drag_started_by(PointerButton::Primary) && !mods.alt {
-            if let (Some(handle), Some(id), Some(pos)) = (
-                self.hovered_handle,
-                self.selected,
-                response.interact_pointer_pos(),
-            ) {
-                // Shift-dragging an arrow leaves a copy where the object was, as in Second Life.
+            if let (Some(handle), Some(frame), Some(pos)) =
+                (self.hovered_handle, frame, response.interact_pointer_pos())
+            {
+                // Shift-dragging an arrow leaves a copy where the selection was, as in SL.
                 if mods.shift && matches!(handle, Handle::Axis(_)) {
-                    self.scene.duplicate(id, Vec3::ZERO);
+                    self.scene.duplicate_all(&self.selection, Vec3::ZERO);
                     self.dirty = true;
                 }
                 let (origin, dir) = ray_at(pos);
-                self.drag = self
-                    .scene
-                    .get(id)
-                    .and_then(|o| Drag::start(handle, o, origin, dir));
+                self.drag = Drag::start(handle, &frame, origin, dir).map(|drag| GroupDrag {
+                    drag,
+                    frame,
+                    objects: self.selected_objects(),
+                });
             }
         }
-        if let Some(drag) = &self.drag {
+        if let Some(group) = &self.drag {
             if response.dragged_by(PointerButton::Primary) {
-                if let (Some(pos), Some(id)) = (response.interact_pointer_pos(), self.selected) {
+                if let Some(pos) = response.interact_pointer_pos() {
                     let (origin, dir) = ray_at(pos);
-                    let updated = drag.update(origin, dir, self.snap(), self.stretch_both_sides);
-                    if let (Some(updated), Some(object)) = (updated, self.scene.get_mut(id)) {
-                        if *object != updated {
-                            *object = updated;
-                            self.dirty = true;
+                    let updated =
+                        group
+                            .drag
+                            .update(origin, dir, self.snap(), self.stretch_both_sides);
+                    if let Some(updated) = updated {
+                        // A single prim takes the handle's result as is; a group moves as one.
+                        let moved = if group.objects.len() == 1 {
+                            vec![updated]
+                        } else {
+                            edit::transform_group(&group.objects, &group.frame, &updated)
+                        };
+                        for m in moved {
+                            if let Some(object) = self.scene.get_mut(m.id) {
+                                if *object != m {
+                                    *object = m;
+                                    self.dirty = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -646,8 +862,7 @@ impl HamrApp {
                         self.camera.focus_on(point);
                     }
                 } else {
-                    self.selected = object;
-                    self.dirty = true;
+                    self.select(object, mods.shift);
                 }
             }
         }
@@ -687,21 +902,10 @@ impl HamrApp {
     }
 }
 
-/// The eight corners of the unit box that every prim is built in.
-fn unit_box_corners() -> [Vec3; 8] {
-    std::array::from_fn(|i| {
-        Vec3::new(
-            if i & 1 == 0 { -0.5 } else { 0.5 },
-            if i & 2 == 0 { -0.5 } else { 0.5 },
-            if i & 4 == 0 { -0.5 } else { 0.5 },
-        )
-    })
-}
-
 /// The twelve edges of an object's bounding box, for the selection outline.
-fn box_outline(object: &Object) -> Vec<LineVertex> {
+fn box_outline(object: &Object, color: [f32; 4]) -> Vec<LineVertex> {
     let m = object.transform();
-    let corners = unit_box_corners().map(|c| m.transform_point3(c));
+    let corners = hamr_core::mesh::unit_box_corners().map(|c| m.transform_point3(c));
     let mut out = Vec::with_capacity(24);
     for a in 0..8usize {
         for bit in [1, 2, 4] {
@@ -710,7 +914,7 @@ fn box_outline(object: &Object) -> Vec<LineVertex> {
                 for i in [a, b] {
                     out.push(LineVertex {
                         position: corners[i].into(),
-                        color: SELECTION_COLOR,
+                        color,
                     });
                 }
             }
@@ -728,9 +932,11 @@ impl HamrApp {
         // Check the more specific shortcuts first, since consuming Ctrl+Z would also match
         // Ctrl+Shift+Z.
         let pressed = ctx.input_mut(|i| {
-            [REDO_SHIFT, REDO, UNDO, SAVE_AS, SAVE, OPEN, NEW, DUPLICATE]
-                .into_iter()
-                .find(|s| i.consume_shortcut(s))
+            [
+                REDO_SHIFT, REDO, UNDO, SAVE_AS, SAVE, OPEN, NEW, DUPLICATE, UNLINK, LINK,
+            ]
+            .into_iter()
+            .find(|s| i.consume_shortcut(s))
         });
         match pressed {
             Some(s) if s == REDO || s == REDO_SHIFT => self.redo(),
@@ -744,6 +950,8 @@ impl HamrApp {
             Some(s) if s == OPEN => self.request(ctx, Discard::Open),
             Some(s) if s == NEW => self.request(ctx, Discard::New),
             Some(s) if s == DUPLICATE => self.duplicate_selected(),
+            Some(s) if s == UNLINK => self.unlink_selected(),
+            Some(s) if s == LINK => self.link_selected(),
             _ => {}
         }
         if self.drag.is_none() {
@@ -821,9 +1029,11 @@ impl eframe::App for HamrApp {
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("build")
-            .default_size(220.0)
-            .show(ui, |ui| self.build_panel(ui));
-        if self.selected.is_some() {
+            .default_size(240.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.build_panel(ui));
+            });
+        if !self.selection.is_empty() {
             egui::Panel::right("object")
                 .default_size(280.0)
                 .show(ui, |ui| {
