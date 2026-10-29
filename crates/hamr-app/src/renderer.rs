@@ -36,8 +36,6 @@ pub struct SceneGeometry {
     pub revision: u64,
     /// Depth-tested lines, such as the grid.
     pub lines: Vec<LineVertex>,
-    /// Lines drawn on top of everything, such as the selection outline.
-    pub overlay_lines: Vec<LineVertex>,
     pub mesh_vertices: Vec<MeshVertex>,
     /// Opaque triangles first, then translucent ones.
     pub mesh_indices: Vec<u32>,
@@ -58,6 +56,9 @@ pub struct ViewportCallback {
     /// Grid lines fade out with distance from this point, reaching zero at `grid_fade_radius`.
     pub grid_fade_center: Vec3,
     pub grid_fade_radius: f32,
+    /// Lines drawn on top of everything, such as the selection outline and the handles. They
+    /// change every frame with the camera, so they are uploaded every frame.
+    pub overlay: Vec<LineVertex>,
     pub size_px: [u32; 2],
     pub geometry: Arc<SceneGeometry>,
 }
@@ -88,7 +89,6 @@ struct Targets {
 struct Buffers {
     revision: u64,
     lines: Option<(wgpu::Buffer, u32)>,
-    overlay: Option<(wgpu::Buffer, u32)>,
     /// Vertices, indices, opaque index count and total index count.
     mesh: Option<(wgpu::Buffer, wgpu::Buffer, u32, u32)>,
 }
@@ -386,7 +386,6 @@ impl ViewportRenderer {
             })
         };
         let lines = line_buffer("hamr lines", &geometry.lines);
-        let overlay = line_buffer("hamr overlay", &geometry.overlay_lines);
         let mesh = (!geometry.mesh_indices.is_empty()).then(|| {
             let vertices = vertex_buffer(
                 "hamr mesh vertices",
@@ -409,7 +408,6 @@ impl ViewportRenderer {
         self.buffers = Some(Buffers {
             revision: geometry.revision,
             lines,
-            overlay,
             mesh,
         });
     }
@@ -440,6 +438,15 @@ impl CallbackTrait for ViewportCallback {
             grid_fade: self.grid_fade_center.extend(self.grid_fade_radius).into(),
         };
         queue.write_buffer(&renderer.globals, 0, bytemuck::bytes_of(&globals));
+
+        let overlay = (!self.overlay.is_empty()).then(|| {
+            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("hamr overlay"),
+                contents: bytemuck::cast_slice(&self.overlay),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            (buffer, self.overlay.len() as u32)
+        });
 
         let (Some(targets), Some(buffers)) = (&renderer.targets, &renderer.buffers) else {
             return Vec::new();
@@ -487,7 +494,7 @@ impl CallbackTrait for ViewportCallback {
                 pass.draw_indexed(*opaque..*total, 0, 0..1);
             }
         }
-        if let Some((vertices, count)) = &buffers.overlay {
+        if let Some((vertices, count)) = &overlay {
             pass.set_pipeline(&renderer.overlay_pipeline);
             pass.set_vertex_buffer(0, vertices.slice(..));
             pass.draw(0..*count, 0..1);
