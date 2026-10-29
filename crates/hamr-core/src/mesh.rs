@@ -159,6 +159,17 @@ fn ray_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f3
     (t > 0.0).then_some(t)
 }
 
+/// The eight corners of the unit box (−0.5..0.5) that every prim is built in.
+pub fn unit_box_corners() -> [Vec3; 8] {
+    std::array::from_fn(|i| {
+        Vec3::new(
+            if i & 1 == 0 { -0.5 } else { 0.5 },
+            if i & 2 == 0 { -0.5 } else { 0.5 },
+            if i & 4 == 0 { -0.5 } else { 0.5 },
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

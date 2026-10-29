@@ -4,7 +4,9 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod arrange_panel;
 mod files;
+mod library_panel;
 mod object_panel;
 mod renderer;
 

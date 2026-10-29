@@ -16,11 +16,15 @@ makes them wrong.
 | `crates/hamr-core/src/solid.rs` | `Solid`: indexed closed surface, `check_closed`, `to_mesh` for shading |
 | `crates/hamr-core/src/prim/` | `PrimShape` (SL Object-tab parameters), `profile.rs` cross-sections, `sweep.rs` path sweep and caps, `tests.rs` watertightness grid |
 | `crates/hamr-core/src/scene.rs` | `Scene` and `Object` (prim + position, rotation, size in mm, colour, negative flag) |
+| `crates/hamr-core/src/edit.rs` | Multi-prim edits: group frame and group transform for handles, mirror, linear and circular arrays |
+| `crates/hamr-core/src/library.rs` | `CustomPrim`: a saved selection (`.hamrprim` JSON) placed back as one link set |
 | `crates/hamr-core/src/history.rs` | `History`: snapshot undo/redo; `commit` turns changes since the last commit into one step |
 | `crates/hamr-core/src/project.rs` | `.hamr` project files: versioned JSON of the scene, `to_json` / `from_json` |
 | `crates/hamr-core/src/gizmo.rs` | Move/rotate/stretch handles: their lines, screen-space hit test, and `Drag` maths with snapping |
 | `crates/hamr-app` | The `hamr` binary: eframe/egui UI and wgpu viewport |
 | `crates/hamr-app/src/app.rs` | Window layout, menus, shortcuts, Build panel, viewport input, handles, picking, undo commits |
+| `crates/hamr-app/src/arrange_panel.rs` | Mirror and Array section of the Build panel |
+| `crates/hamr-app/src/library_panel.rs` | Custom prims section and the per-user library folder |
 | `crates/hamr-app/src/files.rs` | Open/save dialogs (rfd) and atomic project file writes |
 | `crates/hamr-app/src/object_panel.rs` | Object panel: placement and shape parameters of the selected prim |
 | `crates/hamr-app/src/renderer.rs`, `*.wgsl` | Viewport rendering (opaque, translucent negative prims, grid, overlay) and shaders |
@@ -74,6 +78,17 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
   step, so don't commit from inside individual edits.
 - Move and rotate handles use world axes, stretch handles the prim's own axes. Handle maths lives in
   `gizmo.rs` so it is tested without a window; the app only hit-tests and feeds it rays.
+- Link sets are flat: each child's `Object::link` names the root directly, never another child.
+  Positions stay in world space, so moving a set means moving every member (`edit::transform_group`).
+  `Scene::from_objects` drops links that would break this, so loaded files can't create chains.
+- Several selected prims share one set of handles on `edit::group_frame`. A group can only scale
+  evenly, since its prims may be turned any way.
+- Mirroring sets `Object::mirrored` (a flip of the prim's own X axis) and adjusts the rotation. The
+  transform's determinant is then negative, so anything that builds triangles from it (the
+  renderer now, export later) must reverse their winding.
+- Custom prims live in `%APPDATA%\Hamr\prims` on Windows and `$XDG_DATA_HOME/hamr/prims` (or
+  `~/.local/share/hamr/prims`) elsewhere. Only "group of prims" saving works so far; "baked mesh"
+  needs the boolean union from step 4.
 - Unsaved changes are `scene != saved`, so undoing back to the saved state clears the `*` in the
   title.
 

@@ -3,9 +3,11 @@
 //! Hamr uses a right-handed, Z-up coordinate system and stores every length in millimetres.
 
 pub mod camera;
+pub mod edit;
 pub mod gizmo;
 pub mod grid;
 pub mod history;
+pub mod library;
 pub mod mesh;
 pub mod prim;
 pub mod project;
