@@ -1,0 +1,22 @@
+# Flatpak of the release build. The release workflow stages the build into
+# dist/hamr-linux (packaging/linux/stage.sh) before running flatpak-builder.
+app-id: io.github.tharkis.Hamr
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: hamr
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+modules:
+  - name: hamr
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 hamr /app/bin/hamr
+      - cp -r share /app/
+      - install -Dm644 LICENSE-MIT LICENSE-APACHE -t /app/share/licenses/hamr
+    sources:
+      - type: dir
+        path: ../../dist/hamr-linux

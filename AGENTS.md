@@ -25,6 +25,8 @@ makes them wrong.
 | `crates/hamr-core/src/project.rs` | `.hamr` project files: versioned JSON of the scene, `to_json` / `from_json` |
 | `crates/hamr-core/src/gizmo.rs` | Move/rotate/stretch handles: their lines, screen-space hit test, and `Drag` maths with snapping |
 | `crates/hamr-app` | The `hamr` binary: eframe/egui UI and wgpu viewport |
+| `crates/hamr-app/src/about.rs` | About window and `ICON_PNG`, also used for the window icon in `main.rs` |
+| `crates/hamr-app/build.rs` | Embeds `assets/icon/hamr.ico` in the Windows exe (winresource) |
 | `crates/hamr-app/src/app.rs` | Window layout, menus, shortcuts, Build panel, viewport input, handles, picking, undo commits |
 | `crates/hamr-app/src/arrange_panel.rs` | Mirror and Array section of the Build panel |
 | `crates/hamr-app/src/library_panel.rs` | Custom prims section and the per-user library folder |
@@ -33,6 +35,14 @@ makes them wrong.
 | `crates/hamr-app/src/object_panel.rs` | Object panel: placement and shape parameters of the selected prim |
 | `crates/hamr-app/src/renderer.rs`, `*.wgsl` | Viewport rendering (opaque, translucent negative prims, grid, overlay) and shaders |
 | `.github/workflows/ci.yml` | fmt + clippy, then test and release build on Ubuntu and Windows |
+| `.github/workflows/release.yml` | Builds every installer and package; run by hand on `main` to tag and publish a release |
+| `assets/icon/` | App icon: `hamr.svg` (full), `hamr-small.svg` (no engraved rune, for 16 and 32 px), rendered PNGs and `hamr.ico` |
+| `assets/logo/` | README logo (icon + rune-cut wordmark), light and dark versions |
+| `packaging/linux/` | Desktop file, AppStream metainfo, `stage.sh` (tree every Linux package is made from), `build-appimage.sh` |
+| `packaging/arch/PKGBUILD` | Arch/CachyOS package, repackaging the release tarball |
+| `packaging/flatpak/` | Flatpak manifest, packaging the staged release build |
+| `packaging/windows/hamr.iss` | Inno Setup installer script |
+| `packaging/release-notes.md` | Install table put at the top of every GitHub release |
 
 Plan: 1) foundation, viewport, CI 2) prim engine 3) build tools 4) export. See the README status table.
 
@@ -46,7 +56,18 @@ cargo test -p hamr-core                       # core only, no window needed
 cargo test -p hamr-core camera::              # tests in one module
 cargo fmt --all --check                       # CI formatting check
 cargo clippy --all-targets -- -D warnings     # CI lint; warnings fail the build
+cargo deb -p hamr --no-build                  # .deb from target/release (needs cargo-deb)
+cargo generate-rpm -p crates/hamr-app         # .rpm from target/release (needs cargo-generate-rpm)
+packaging/linux/stage.sh                      # dist/hamr-linux, input to tarball, AppImage, Arch, Flatpak
 ```
+
+## Releasing
+
+The version lives in `[workspace.package]` in the root `Cargo.toml`; also add a `<release>` line
+to `packaging/linux/io.github.tharkis.Hamr.metainfo.xml`. After that change is merged, run the
+Release workflow on `main` (Actions > Release > Run workflow). It builds the Windows installer and
+zip, `.deb`, `.rpm`, Arch package, Flatpak, AppImage and tarball, tags `v<version>` and publishes
+the GitHub release. Pull requests that touch packaging run the same builds without publishing.
 
 ## Running the app in a cloud container
 
@@ -99,6 +120,12 @@ DISPLAY=:99 import -window root /tmp/hamr.png  # screenshot
   title.
 
 ## Known traps
+
+- The app ID `io.github.tharkis.Hamr` must match in `main.rs` (`APP_ID`), the desktop file, the
+  metainfo, icon file names and the Flatpak manifest. Wayland finds the window's icon through it;
+  the window icon set in `main.rs` only works on X11 and Windows.
+- Regenerate the icon PNGs and `.ico` from the SVGs together when the icon changes; sizes 16 and
+  32 come from `hamr-small.svg`.
 
 - Run `xdotool windowfocus <id>` before `xdotool key ...`, or the keys go nowhere.
 - Without `mesa-vulkan-drivers` wgpu finds no Vulkan adapter in the container.

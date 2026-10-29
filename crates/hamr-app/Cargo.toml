@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+build = "build.rs"
+readme = "../../README.md"
+
 [[bin]]
 name = "hamr"
 path = "src/main.rs"
@@ -19,3 +22,58 @@ eframe = { version = "0.37", default-features = false, features = ["wgpu", "defa
 log = "0.4"
 env_logger = "0.11"
 rfd = "0.17"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.34"
+
+# Linux packages. Build with `cargo build --release` first, then `cargo deb -p hamr --no-build`
+# or `cargo generate-rpm -p crates/hamr-app`. Paths are relative to this crate.
+[package.metadata.deb]
+maintainer = "Tharkis <10079403+Tharkis@users.noreply.github.com>"
+copyright = "Hamr contributors"
+license-file = ["../../LICENSE-MIT", "0"]
+section = "graphics"
+priority = "optional"
+depends = "$auto, libvulkan1, libxkbcommon0, libxkbcommon-x11-0"
+extended-description = """\
+Hamr builds 3D models out of primitives, in the spirit of the Second Life build tools, \
+and exports watertight STL, OBJ and glTF for 3D printing and games."""
+assets = [
+    ["target/release/hamr", "usr/bin/", "755"],
+    ["../../packaging/linux/io.github.tharkis.Hamr.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/io.github.tharkis.Hamr.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../assets/icon/hamr.svg", "usr/share/icons/hicolor/scalable/apps/io.github.tharkis.Hamr.svg", "644"],
+    ["../../assets/icon/hamr-16.png", "usr/share/icons/hicolor/16x16/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-32.png", "usr/share/icons/hicolor/32x32/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-48.png", "usr/share/icons/hicolor/48x48/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-64.png", "usr/share/icons/hicolor/64x64/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-128.png", "usr/share/icons/hicolor/128x128/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-256.png", "usr/share/icons/hicolor/256x256/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../assets/icon/hamr-512.png", "usr/share/icons/hicolor/512x512/apps/io.github.tharkis.Hamr.png", "644"],
+    ["../../README.md", "usr/share/doc/hamr/", "644"],
+]
+
+[package.metadata.generate-rpm]
+license = "MIT OR Apache-2.0"
+summary = "Build 3D models from primitives"
+assets = [
+    { source = "target/release/hamr", dest = "/usr/bin/hamr", mode = "755" },
+    { source = "../../packaging/linux/io.github.tharkis.Hamr.desktop", dest = "/usr/share/applications/io.github.tharkis.Hamr.desktop", mode = "644" },
+    { source = "../../packaging/linux/io.github.tharkis.Hamr.metainfo.xml", dest = "/usr/share/metainfo/io.github.tharkis.Hamr.metainfo.xml", mode = "644" },
+    { source = "../../assets/icon/hamr.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.tharkis.Hamr.svg", mode = "644" },
+    { source = "../../assets/icon/hamr-16.png", dest = "/usr/share/icons/hicolor/16x16/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-32.png", dest = "/usr/share/icons/hicolor/32x32/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-48.png", dest = "/usr/share/icons/hicolor/48x48/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-64.png", dest = "/usr/share/icons/hicolor/64x64/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../assets/icon/hamr-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/io.github.tharkis.Hamr.png", mode = "644" },
+    { source = "../../README.md", dest = "/usr/share/doc/hamr/README.md", mode = "644", doc = true },
+    { source = "../../LICENSE-MIT", dest = "/usr/share/licenses/hamr/LICENSE-MIT", mode = "644", doc = true },
+    { source = "../../LICENSE-APACHE", dest = "/usr/share/licenses/hamr/LICENSE-APACHE", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+vulkan-loader = "*"
+libxkbcommon = "*"
+libxkbcommon-x11 = "*"

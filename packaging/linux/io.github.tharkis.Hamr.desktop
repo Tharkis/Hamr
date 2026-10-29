@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hamr
+GenericName=3D Modeler
+Comment=Build 3D models from primitives and export watertight STL, OBJ and glTF
+Exec=hamr
+Icon=io.github.tharkis.Hamr
+Terminal=false
+Categories=Graphics;3DGraphics;Engineering;
+Keywords=3D;model;modeling;printing;STL;OBJ;glTF;prim;primitive;
+StartupWMClass=io.github.tharkis.Hamr

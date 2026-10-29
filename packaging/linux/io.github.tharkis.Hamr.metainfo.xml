@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.tharkis.Hamr</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>Hamr</name>
+  <summary>Build 3D models from primitives</summary>
+  <developer id="io.github.tharkis">
+    <name>Tharkis</name>
+  </developer>
+  <description>
+    <p>
+      Hamr builds 3D models out of primitives, in the spirit of the Second Life build tools.
+      Boxes, cylinders, spheres, tori, tubes, rings and prisms can be cut, hollowed, twisted and
+      tapered, then linked, mirrored and arrayed into larger models.
+    </p>
+    <p>
+      Export merges everything into one watertight solid and writes STL, OBJ or glTF, ready for a
+      slicer or a game engine. A printability check warns about overhangs, floating pieces and
+      models too big for the printer.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.tharkis.Hamr.desktop</launchable>
+  <url type="homepage">https://github.com/Tharkis/Hamr</url>
+  <url type="bugtracker">https://github.com/Tharkis/Hamr/issues</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-10-29"/>
+  </releases>
+</component>
